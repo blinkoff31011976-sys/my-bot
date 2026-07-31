@@ -12,10 +12,10 @@ GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Настройка Нейросети
+# Настройка Нейросети (используем базовую модель gemini-pro)
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+    ai_model = genai.GenerativeModel('gemini-pro')
 else:
     ai_model = None
 
@@ -62,7 +62,6 @@ def get_stats():
     conn.close()
     return total_users or 0, total_queries or 0
 
-# Создаем БД при запуске
 init_db()
 
 # --- 3. КЛАВИАТУРА ---
@@ -107,7 +106,6 @@ def about_bot(message):
 def help_info(message):
     bot.send_message(message.chat.id, "Просто отправь любой вопрос — нейросеть сразу сгенерирует ответ!")
 
-# Обработка любого текста через Нейросеть Gemini
 @bot.message_handler(func=lambda message: True)
 def handle_ai_request(message):
     if message.text == "🧠 Спросить ИИ":
