@@ -15,7 +15,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 # Настройка актуальной модели Gemini
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    ai_model = genai.GenerativeModel('gemini-2.0-flash')
 else:
     ai_model = None
 
