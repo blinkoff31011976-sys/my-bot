@@ -12,12 +12,18 @@ GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Настройка Нейросети (используем базовую модель gemini-pro)
+# Автоматический подбор доступной модели ИИ 🧠
+ai_model = None
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-    ai_model = genai.GenerativeModel('gemini-pro')
-else:
-    ai_model = None
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                ai_model = genai.GenerativeModel(m.name)
+                print(f"Выбрана модель: {m.name}")
+                break
+    except Exception as e:
+        print(f"Ошибка инициализации ИИ: {e}")
 
 # --- 2. БАЗА ДАННЫХ SQLITE ---
 def init_db():
