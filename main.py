@@ -1,95 +1,135 @@
 import os
+import sqlite3
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot import types
+import google.generativeai as genai
 
-TOKEN = os.environ.get('BOT_TOKEN', '')
-bot = telebot.TeleBot(TOKEN)
+# --- 1. ИНИЦИАЛИЗАЦИЯ И НАСТРОЙКА ---
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
+GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
 
-# --- 1. КЛАВИАТУРЫ И МЕНЮ ---
+bot = telebot.TeleBot(BOT_TOKEN)
 
-# Главное меню под полем ввода
+# Настройка Нейросети
+if GEMINI_KEY:
+    genai.configure(api_key=GEMINI_KEY)
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    ai_model = None
+
+# --- 2. БАЗА ДАННЫХ SQLITE ---
+def init_db():
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            query_count INTEGER DEFAULT 0
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_user(user_id, username, first_name):
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO users (user_id, username, first_name, query_count)
+        VALUES (?, ?, ?, 0)
+        ON CONFLICT(user_id) DO UPDATE SET
+            username=excluded.username,
+            first_name=excluded.first_name
+    ''', (user_id, username, first_name))
+    conn.commit()
+    conn.close()
+
+def increment_queries(user_id):
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    cursor.execute('UPDATE users SET query_count = query_count + 1 WHERE user_id = ?', (user_id,))
+    conn.commit()
+    conn.close()
+
+def get_stats():
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*), SUM(query_count) FROM users')
+    total_users, total_queries = cursor.fetchone()
+    conn.close()
+    return total_users or 0, total_queries or 0
+
+# Создаем БД при запуске
+init_db()
+
+# --- 3. КЛАВИАТУРА ---
 def get_main_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    btn1 = types.KeyboardButton("ℹ️ О боте")
-    btn2 = types.KeyboardButton("📊 Статистика")
-    btn3 = types.KeyboardButton("🔗 Инлайн-меню")
-    btn4 = types.KeyboardButton("⚙️ Настройки")
-    markup.add(btn1, btn2, btn3, btn4)
+    markup.add(
+        types.KeyboardButton("🧠 Спросить ИИ"),
+        types.KeyboardButton("📊 Статистика БД"),
+        types.KeyboardButton("ℹ️ О боте"),
+        types.KeyboardButton("⚙️ Помощь")
+    )
     return markup
 
-# Инлайн-кнопки под сообщением
-def get_inline_keyboard():
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    btn_site = types.InlineKeyboardButton("🌐 GitHub Профиль", url="https://github.com")
-    btn_action = types.InlineKeyboardButton("⚡ Быстрое действие", callback_data="fast_action")
-    markup.add(btn_site, btn_action)
-    return markup
-
-
-# --- 2. ОБРАБОТЧИКИ КОМАНД И КНОПОК ---
-
+# --- 4. ОБРАБОТЧИКИ КОМАНД И ТЕКСТА ---
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
+    save_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     bot.send_message(
         message.chat.id,
-        "Добро пожаловать! Используйте меню ниже для удобного управления 🚀",
+        f"Привет, {message.from_user.first_name}! 🚀\n"
+        "Я твой личный ассистент с ИИ и Базой Данных.\n"
+        "Задай мне любой вопрос или выбери действие в меню!",
         reply_markup=get_main_keyboard()
     )
 
-# Обработка нажатий кнопок главного меню
-@bot.message_handler(func=lambda message: message.text == "ℹ️ О боте")
-def about_bot(message):
-    bot.send_message(message.chat.id, "Я универсальный Telegram-бот, работающий 24/7 на сервере Render! 🤖")
-
-@bot.message_handler(func=lambda message: message.text == "📊 Статистика")
-def stats(message):
-    bot.send_message(message.chat.id, "Статистика: Все системы работают штатно! 🟢")
-
-@bot.message_handler(func=lambda message: message.text == "⚙️ Настройки")
-def settings(message):
-    bot.send_message(message.chat.id, "Раздел настроек готов к расширению ⚙️")
-
-@bot.message_handler(func=lambda message: message.text == "🔗 Инлайн-меню")
-def show_inline(message):
+@bot.message_handler(func=lambda message: message.text == "📊 Статистика БД")
+def show_stats(message):
+    users_cnt, queries_cnt = get_stats()
     bot.send_message(
         message.chat.id,
-        "Пример кнопок прямо под сообщением:",
-        reply_markup=get_inline_keyboard()
+        f"📊 **Статистика сервера (SQLite):**\n\n"
+        f"👤 Всего пользователей в БД: **{users_cnt}**\n"
+        f"💬 Обработано запросов к ИИ: **{queries_cnt}**",
+        parse_mode="Markdown"
     )
 
-# Обработка нажатий на инлайн-кнопки (callbacks)
-@bot.callback_query_handler(func=lambda call: True)
-def callback_inline(call):
-    if call.data == "fast_action":
-        # Мгновенное всплывающее уведомление
-        bot.answer_callback_query(call.id, "Действие выполнено мгновенно! ⚡", show_alert=True)
+@bot.message_handler(func=lambda message: message.text == "ℹ️ О боте")
+def about_bot(message):
+    bot.send_message(message.chat.id, "🤖 Бот работает 24/7 на Render. Подключены SQLite и Google Gemini AI.")
 
+@bot.message_handler(func=lambda message: message.text == "⚙️ Помощь")
+def help_info(message):
+    bot.send_message(message.chat.id, "Просто отправь любой вопрос — нейросеть сразу сгенерирует ответ!")
 
-# --- 3. ОБРАБОТКА МЕДИАФАЙЛОВ ---
-
-@bot.message_handler(content_types=['photo'])
-def handle_photo(message):
-    file_id = message.photo[-1].file_id
-    bot.reply_to(message, f"Отличное фото! 📸\nID: `{file_id}`", parse_mode="Markdown")
-
-@bot.message_handler(content_types=['voice'])
-def handle_voice(message):
-    bot.reply_to(message, f"Голосовое принято! 🎙️ Длительность: {message.voice.duration} сек.")
-
-@bot.message_handler(content_types=['document'])
-def handle_document(message):
-    size_kb = round(message.document.file_size / 1024, 2)
-    bot.reply_to(message, f"Файл {message.document.file_name} ({size_kb} КБ) принят! 📄")
-
+# Обработка любого текста через Нейросеть Gemini
 @bot.message_handler(func=lambda message: True)
-def echo_all(message):
-    bot.reply_to(message, f"Вы написали: {message.text}")
+def handle_ai_request(message):
+    if message.text == "🧠 Спросить ИИ":
+        bot.send_message(message.chat.id, "Напиши вопрос прямо в чат! 👇")
+        return
 
+    save_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    
+    if not ai_model:
+        bot.reply_to(message, "⚠️ Ключ ИИ еще не настроен на Render. Добавь переменную GEMINI_API_KEY!")
+        return
 
-# --- 4. СЛУЖЕБНЫЙ СЕРВЕР RENDER ---
+    status_msg = bot.reply_to(message, "🧠 Думаю...")
+    
+    try:
+        response = ai_model.generate_content(message.text)
+        increment_queries(message.from_user.id)
+        bot.edit_message_text(response.text, chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+    except Exception as e:
+        bot.edit_message_text(f"❌ Ошибка генерации: {e}", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
 
+# --- 5. СЕРВЕР ДЛЯ RENDER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
