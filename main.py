@@ -12,7 +12,10 @@ bot = telebot.TeleBot(TOKEN)
 def send_welcome(message):
     bot.reply_to(message, "Привет! Я твой бот, успешно работающий на сервере! 🚀")
 
-# Эхо-ответ на любые другие сообщения
+# Новый обработчик для фотографий 📸
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    bot.reply_to(message, "Отличное фото! Я его получил 📸")# Эхо-ответ на любые другие сообщения
 @bot.message_handler(func=lambda message: True)
 def echo_all(message):
     bot.reply_to(message, message.text)
