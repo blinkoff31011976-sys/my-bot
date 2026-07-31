@@ -12,18 +12,12 @@ GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Автоматический подбор доступной модели ИИ 🧠
-ai_model = None
+# Настройка актуальной модели Gemini
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-    try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                ai_model = genai.GenerativeModel(m.name)
-                print(f"Выбрана модель: {m.name}")
-                break
-    except Exception as e:
-        print(f"Ошибка инициализации ИИ: {e}")
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    ai_model = None
 
 # --- 2. БАЗА ДАННЫХ SQLITE ---
 def init_db():
@@ -89,7 +83,7 @@ def send_welcome(message):
         message.chat.id,
         f"Привет, {message.from_user.first_name}! 🚀\n"
         "Я твой личный ассистент с ИИ и Базой Данных.\n"
-        "Задай мне любой вопрос или выбери действие в меню!",
+        "Задай мне любой вопрос в чате!",
         reply_markup=get_main_keyboard()
     )
 
@@ -99,8 +93,8 @@ def show_stats(message):
     bot.send_message(
         message.chat.id,
         f"📊 **Статистика сервера (SQLite):**\n\n"
-        f"👤 Всего пользователей в БД: **{users_cnt}**\n"
-        f"💬 Обработано запросов к ИИ: **{queries_cnt}**",
+        f"👤 Пользователей в БД: **{users_cnt}**\n"
+        f"💬 Запросов к ИИ: **{queries_cnt}**",
         parse_mode="Markdown"
     )
 
@@ -110,18 +104,18 @@ def about_bot(message):
 
 @bot.message_handler(func=lambda message: message.text == "⚙️ Помощь")
 def help_info(message):
-    bot.send_message(message.chat.id, "Просто отправь любой вопрос — нейросеть сразу сгенерирует ответ!")
+    bot.send_message(message.chat.id, "Просто отправьте любой вопрос в чат — нейросеть сразу сгенерирует ответ!")
 
 @bot.message_handler(func=lambda message: True)
 def handle_ai_request(message):
     if message.text == "🧠 Спросить ИИ":
-        bot.send_message(message.chat.id, "Напиши вопрос прямо в чат! 👇")
+        bot.send_message(message.chat.id, "Напишите вопрос прямо в чат! 👇")
         return
 
     save_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     
     if not ai_model:
-        bot.reply_to(message, "⚠️ Ключ ИИ еще не настроен на Render. Добавь переменную GEMINI_API_KEY!")
+        bot.reply_to(message, "⚠️ Переменная GEMINI_API_KEY не найдена в Render!")
         return
 
     status_msg = bot.reply_to(message, "🧠 Думаю...")
@@ -131,7 +125,12 @@ def handle_ai_request(message):
         increment_queries(message.from_user.id)
         bot.edit_message_text(response.text, chat_id=status_msg.chat.id, message_id=status_msg.message_id)
     except Exception as e:
-        bot.edit_message_text(f"❌ Ошибка генерации: {e}", chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        bot.edit_message_text(
+            f"❌ Ошибка генерации: {e}\n\n"
+            "💡 **Проверьте ключ в Render!** Ключ Google Gemini должен начинаться на `AIzaSy...`",
+            chat_id=status_msg.chat.id,
+            message_id=status_msg.message_id
+        )
 
 # --- 5. СЕРВЕР ДЛЯ RENDER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
