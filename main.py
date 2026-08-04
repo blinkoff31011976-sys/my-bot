@@ -103,7 +103,7 @@ def about_bot(message):
 def help_info(message):
     bot.reply_to(message, "💡 Напишите любой вопрос в чат, и бот ответит на него.")
 
-# --- 4. ОБРАБОТКА ИИ-ЗАПРОСОВ (ПРЯМОЙ HTTP-ЗАПРОС) 🤖 ---
+# --- 4. ОБРАБОТКА ИИ-ЗАПРОСОВ 🤖 ---
 @bot.message_handler(func=lambda message: True)
 def handle_ai_request(message):
     save_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
@@ -112,36 +112,24 @@ def handle_ai_request(message):
         bot.reply_to(message, "⚠️ Переменная GEMINI_API_KEY не найдена в Render!")
         return
 
-    status_msg = bot.reply_to(message, "🧠 Думаю...")
-
     try:
-        # Прямой запрос к REST API Google Gemini
+        # Прямой запрос к Google API 🌐
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
-        headers = {'Content-Type': 'application/json'}
-        payload = {
-            "contents": [{
-                "parts": [{"text": message.text}]
-            }]
-        }
+        payload = {"contents": [{"parts": [{"text": message.text}]}]}
         
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response = requests.post(url, json=payload, timeout=10)
         data = response.json()
         
         if response.status_code == 200:
-            try:
-                answer = data['candidates'][0]['content']['parts'][0]['text']
-                increment_queries(message.from_user.id)
-                bot.edit_message_text(answer, chat_id=status_msg.chat_id, message_id=status_msg.message_id)
-            except (KeyError, IndexError):
-                bot.edit_message_text("⚠️ Google вернул ответ в непривычном формате.", chat_id=status_msg.chat_id, message_id=status_msg.message_id)
+            answer = data['candidates'][0]['content']['parts'][0]['text']
+            increment_queries(message.from_user.id)
+            bot.reply_to(message, answer)
         else:
-            error_details = data.get('error', {}).get('message', response.text)
-            bot.edit_message_text(f"❌ Ошибка Google API ({response.status_code}): {error_details}", chat_id=status_msg.chat_id, message_id=status_msg.message_id)
+            err = data.get('error', {}).get('message', response.text)
+            bot.reply_to(message, f"❌ Ошибка Google ({response.status_code}): {err}")
 
-    except requests.exceptions.Timeout:
-        bot.edit_message_text("❌ Превышено время ожидания ответа от сервера Google.", chat_id=status_msg.chat_id, message_id=status_msg.message_id)
     except Exception as e:
-        bot.edit_message_text(f"❌ Ошибка приложения: {e}", chat_id=status_msg.chat_id, message_id=status_msg.message_id)
+        bot.reply_to(message, f"❌ Ошибка: {e}")
 
 # --- 5. СЕРВЕР ДЛЯ RENDER 🌐 ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
