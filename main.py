@@ -103,7 +103,7 @@ def about_bot(message):
 def help_info(message):
     bot.reply_to(message, "💡 Напишите любой вопрос в чат, и бот ответит на него.")
 
-# --- 4. ОБРАБОТКА ИИ-ЗАПРОСОВ 🤖 ---
+# --- 4. ОБРАБОТКА ИИ-ЗАПРОСОВ (Bearer Token) 🤖 ---
 @bot.message_handler(func=lambda message: True)
 def handle_ai_request(message):
     save_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
@@ -113,11 +113,14 @@ def handle_ai_request(message):
         return
 
     try:
-        # Прямой запрос к Google API 🌐
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        headers = {
+            "Authorization": f"Bearer {GEMINI_KEY}",
+            "Content-Type": "application/json"
+        }
         payload = {"contents": [{"parts": [{"text": message.text}]}]}
         
-        response = requests.post(url, json=payload, timeout=10)
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
         data = response.json()
         
         if response.status_code == 200:
