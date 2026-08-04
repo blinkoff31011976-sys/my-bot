@@ -12,14 +12,14 @@ GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Настройка актуальной модели Gemini
+# Настройка актуальной модели Gemini 🧠
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
     ai_model = genai.GenerativeModel('gemini-1.5-flash')
 else:
     ai_model = None
 
-# --- 2. БАЗА ДАННЫХ SQLITE ---
+# --- 2. БАЗА ДАННЫХ SQLITE 💾 ---
 def init_db():
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
@@ -41,8 +41,8 @@ def save_user(user_id, username, first_name):
         INSERT INTO users (user_id, username, first_name, query_count)
         VALUES (?, ?, ?, 0)
         ON CONFLICT(user_id) DO UPDATE SET
-            username=excluded.username,
-            first_name=excluded.first_name
+            username = excluded.username,
+            first_name = excluded.first_name
     ''', (user_id, username, first_name))
     conn.commit()
     conn.close()
@@ -50,89 +50,76 @@ def save_user(user_id, username, first_name):
 def increment_queries(user_id):
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
-    cursor.execute('UPDATE users SET query_count = query_count + 1 WHERE user_id = ?', (user_id,))
+    cursor.execute('''
+        UPDATE users SET query_count = query_count + 1 WHERE user_id = ?
+    ''', (user_id,))
     conn.commit()
     conn.close()
 
-def get_stats():
+def get_stats(user_id):
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*), SUM(query_count) FROM users')
-    total_users, total_queries = cursor.fetchone()
+    cursor.execute('SELECT query_count FROM users WHERE user_id = ?', (user_id,))
+    row = cursor.fetchone()
     conn.close()
-    return total_users or 0, total_queries or 0
+    return row[0] if row else 0
 
+# Инициализация базы данных при старте
 init_db()
 
-# --- 3. КЛАВИАТУРА ---
+# --- 3. КЛАВИАТУРА И КОМАНДЫ ⌨️ ---
 def get_main_keyboard():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add(
-        types.KeyboardButton("🧠 Спросить ИИ"),
-        types.KeyboardButton("📊 Статистика БД"),
-        types.KeyboardButton("ℹ️ О боте"),
-        types.KeyboardButton("⚙️ Помощь")
-    )
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('📊 Статистика', 'ℹ️ О боте')
+    markup.row('❓ Помощь')
     return markup
 
-# --- 4. ОБРАБОТЧИКИ КОМАНД И ТЕКСТА ---
-@bot.message_handler(commands=['start', 'help'])
+@bot.message_handler(commands=['start'])
 def send_welcome(message):
     save_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    bot.send_message(
-        message.chat.id,
+    bot.reply_to(
+        message,
         f"Привет, {message.from_user.first_name}! 🚀\n"
-        "Я твой личный ассистент с ИИ и Базой Данных.\n"
-        "Задай мне любой вопрос в чате!",
+        "Я бот с интеграцией Google Gemini. Задайте мне любой вопрос!",
         reply_markup=get_main_keyboard()
     )
 
-@bot.message_handler(func=lambda message: message.text == "📊 Статистика БД")
+@bot.message_handler(func=lambda m: m.text == '📊 Статистика')
 def show_stats(message):
-    users_cnt, queries_cnt = get_stats()
-    bot.send_message(
-        message.chat.id,
-        f"📊 **Статистика сервера (SQLite):**\n\n"
-        f"👤 Пользователей в БД: **{users_cnt}**\n"
-        f"💬 Запросов к ИИ: **{queries_cnt}**",
-        parse_mode="Markdown"
-    )
+    count = get_stats(message.from_user.id)
+    bot.reply_to(message, f"📈 Вы отправили запросов: **{count}**", parse_mode='Markdown')
 
-@bot.message_handler(func=lambda message: message.text == "ℹ️ О боте")
+@bot.message_handler(func=lambda m: m.text == 'ℹ️ О боте')
 def about_bot(message):
-    bot.send_message(message.chat.id, "🤖 Бот работает 24/7 на Render. Подключены SQLite и Google Gemini AI.")
+    bot.reply_to(message, "🤖 Этот бот работает на базе модели **Gemini 1.5 Flash** и развёрнут на сервере Render.")
 
-@bot.message_handler(func=lambda message: message.text == "⚙️ Помощь")
+@bot.message_handler(func=lambda m: m.text == '❓ Помощь')
 def help_info(message):
-    bot.send_message(message.chat.id, "Просто отправьте любой вопрос в чат — нейросеть сразу сгенерирует ответ!")
+    bot.reply_to(message, "💡 Просто напишите любой текст или вопрос в чат, и бот сгенерирует ответ с помощью ИИ.")
 
+# --- 4. ОБРАБОТКА ИИ-ЗАПРОСОВ 🤖 ---
 @bot.message_handler(func=lambda message: True)
 def handle_ai_request(message):
-    if message.text == "🧠 Спросить ИИ":
-        bot.send_message(message.chat.id, "Напишите вопрос прямо в чат! 👇")
-        return
-
     save_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    
+
     if not ai_model:
         bot.reply_to(message, "⚠️ Переменная GEMINI_API_KEY не найдена в Render!")
         return
 
     status_msg = bot.reply_to(message, "🧠 Думаю...")
-    
+
     try:
         response = ai_model.generate_content(message.text)
         increment_queries(message.from_user.id)
-        bot.edit_message_text(response.text, chat_id=status_msg.chat.id, message_id=status_msg.message_id)
+        bot.edit_message_text(response.text, chat_id=status_msg.chat_id, message_id=status_msg.message_id)
     except Exception as e:
         bot.edit_message_text(
-            f"❌ Ошибка генерации: {e}\n\n"
-            "💡 **Проверьте ключ в Render!** Ключ Google Gemini должен начинаться на `AIzaSy...`",
-            chat_id=status_msg.chat.id,
+            f"❌ Ошибка генерации: {e}",
+            chat_id=status_msg.chat_id,
             message_id=status_msg.message_id
         )
 
-# --- 5. СЕРВЕР ДЛЯ RENDER ---
+# --- 5. СЕРВЕР ДЛЯ RENDER 🌐 ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
