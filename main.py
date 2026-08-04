@@ -12,7 +12,7 @@ GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Настройка актуальной модели Gemini 🧠
+# Настройка модели Gemini
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
     ai_model = genai.GenerativeModel('gemini-1.5-flash')
@@ -21,50 +21,63 @@ else:
 
 # --- 2. БАЗА ДАННЫХ SQLITE 💾 ---
 def init_db():
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            first_name TEXT,
-            query_count INTEGER DEFAULT 0
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('bot_database.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                query_count INTEGER DEFAULT 0
+            )
+        ''')
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Ошибка БД (init): {e}", flush=True)
 
 def save_user(user_id, username, first_name):
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO users (user_id, username, first_name, query_count)
-        VALUES (?, ?, ?, 0)
-        ON CONFLICT(user_id) DO UPDATE SET
-            username = excluded.username,
-            first_name = excluded.first_name
-    ''', (user_id, username, first_name))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('bot_database.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO users (user_id, username, first_name, query_count)
+            VALUES (?, ?, ?, 0)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name
+        ''', (user_id, username, first_name))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Ошибка БД (save): {e}", flush=True)
 
 def increment_queries(user_id):
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        UPDATE users SET query_count = query_count + 1 WHERE user_id = ?
-    ''', (user_id,))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('bot_database.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE users SET query_count = query_count + 1 WHERE user_id = ?
+        ''', (user_id,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Ошибка БД (increment): {e}", flush=True)
 
 def get_stats(user_id):
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT query_count FROM users WHERE user_id = ?', (user_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return row[0] if row else 0
+    try:
+        conn = sqlite3.connect('bot_database.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT query_count FROM users WHERE user_id = ?', (user_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else 0
+    except Exception as e:
+        print(f"Ошибка БД (stats): {e}", flush=True)
+        return 0
 
-# Инициализация базы данных при старте
+# Инициализация БД при запуске
 init_db()
 
 # --- 3. КЛАВИАТУРА И КОМАНДЫ ⌨️ ---
@@ -87,15 +100,15 @@ def send_welcome(message):
 @bot.message_handler(func=lambda m: m.text == '📊 Статистика')
 def show_stats(message):
     count = get_stats(message.from_user.id)
-    bot.reply_to(message, f"📈 Вы отправили запросов: **{count}**", parse_mode='Markdown')
+    bot.reply_to(message, f"📈 Вы отправили запросов: {count}")
 
 @bot.message_handler(func=lambda m: m.text == 'ℹ️ О боте')
 def about_bot(message):
-    bot.reply_to(message, "🤖 Этот бот работает на базе модели **Gemini 1.5 Flash** и развёрнут на сервере Render.")
+    bot.reply_to(message, "🤖 Этот бот работает на базе модели Gemini 1.5 Flash.")
 
 @bot.message_handler(func=lambda m: m.text == '❓ Помощь')
 def help_info(message):
-    bot.reply_to(message, "💡 Просто напишите любой текст или вопрос в чат, и бот сгенерирует ответ с помощью ИИ.")
+    bot.reply_to(message, "💡 Напишите любой вопрос в чат, и бот ответит на него.")
 
 # --- 4. ОБРАБОТКА ИИ-ЗАПРОСОВ 🤖 ---
 @bot.message_handler(func=lambda message: True)
@@ -110,11 +123,25 @@ def handle_ai_request(message):
 
     try:
         response = ai_model.generate_content(message.text)
+        
+        # Безопасное извлечение текста ответа
+        answer = None
+        if hasattr(response, 'text') and response.text:
+            answer = response.text
+        elif hasattr(response, 'candidates') and response.candidates:
+            answer = "⚠️ Ответ не может быть показан из-за настроек безопасности Google."
+        
+        if not answer:
+            answer = "⚠️ Получен пустой ответ от ИИ."
+
         increment_queries(message.from_user.id)
-        bot.edit_message_text(response.text, chat_id=status_msg.chat_id, message_id=status_msg.message_id)
+        bot.edit_message_text(answer, chat_id=status_msg.chat_id, message_id=status_msg.message_id)
+
     except Exception as e:
+        error_msg = str(e)
+        print(f"Ошибка обращения к Gemini: {error_msg}", flush=True)
         bot.edit_message_text(
-            f"❌ Ошибка генерации: {e}",
+            f"❌ Ошибка генерации: {error_msg}",
             chat_id=status_msg.chat_id,
             message_id=status_msg.message_id
         )
@@ -133,5 +160,5 @@ def run_http_server():
 
 if __name__ == '__main__':
     threading.Thread(target=run_http_server, daemon=True).start()
-    print("Бот запущен...")
+    print("Бот запущен...", flush=True)
     bot.infinity_polling()
